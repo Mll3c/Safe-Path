@@ -1,0 +1,76 @@
+services:
+  postgres:
+    image: postgis/postgis:16-3.4
+    restart: unless-stopped
+    env_file: .env.dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: safe-path-api
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+    env_file: .env.dev
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery-worker:
+    image: safe-path-api
+    env_file: .env.dev
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: celery -A config worker --loglevel=info
+    restart: unless-stopped
+
+  celery-beat:
+    image: safe-path-api
+    env_file: .env.dev
+    depends_on:
+      api:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    volumes:
+      - .:/app
+    command: celery -A config beat -l info
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
